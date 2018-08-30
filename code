@@ -1,0 +1,848 @@
+using Microsoft.Reporting.WinForms;
+using NTC_Consolidator.Core.Interfaces;
+using NTC_Consolidator.Core.Repository;
+using NTC_Consolidator.Data;
+using NTC_Consolidator.Helper;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace NTC_Consolidator.NTC_View
+{
+    public partial class frmReportViewer : MetroFramework.Forms.MetroForm
+    {
+        private ICorrespondingGLRepository correspondingGLRepository;
+        private IConsolidator consolidatorRepository;
+        private IFilePathRepository filePathRepository;
+        private IExchangeRate exchangeRate;
+
+       
+        Array iResult;
+
+        DataTable dtSource = new DataTable();
+        DataTable dtexceptionalReport;
+        DataTable dtSumOfOB;
+        DataTable dtSumOfUDIBalance;
+        DataTable dtSumOfPVRV;
+        DataTable dtSumOfPVGD;
+        DataTable dtSumOfACCRUEDINTERESTRECEIVABLE;
+        DataTable dtSumOfCLIENTEQUITY;
+
+        private static frmReportViewer frmrptviewer = null;
+        //private string ExportFilename = "";
+        private string rptDataSetName = "";
+        private string filename = "";
+        //private string fileDestination = "";
+
+        private string rdlcFile = "";
+        private string sheetname = "";
+        private string pathfile = "";
+
+        public static frmReportViewer Instance()
+        {
+            if (frmrptviewer == null)
+            {
+                frmrptviewer = new frmReportViewer();
+            }
+            return frmrptviewer;
+        }
+
+        public frmReportViewer()
+        {
+            InitializeComponent();
+            this.consolidatorRepository = new ConsolidatorRepository(new NTC_Context_Entities());
+            this.filePathRepository = new FilePathRepository(new NTC_Context_Entities());
+            this.exchangeRate = new ExchangeRateRepository(new NTC_Context_Entities());
+            this.correspondingGLRepository = new CorrespondingGLRepository(new NTC_Context_Entities());
+
+            pnlWaitInfo.Location = new Point(this.ClientSize.Width / 2 - pnlWaitInfo.Size.Width / 2, this.ClientSize.Height / 2 - pnlWaitInfo.Size.Height / 2);
+            pnlWaitInfo.Visible = false;
+        }
+
+        private void frmReportViewer_Load(object sender, EventArgs e)
+        {
+            this.reportViewer1.RefreshReport();
+            var firstDayOfMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+            cmbDateFrom.Text = firstDayOfMonth.ToShortDateString();
+            btnExecute.Enabled = false;
+        }
+
+        // public void LoadDataToRDLC(string rptDataSetName, string filename, DataTable dtSource, string fileDestination, string fileFormat, string rdlcFile, string sheetname)
+        public void LoadDataToRDLC(string rptDataSetName, DataTable dtSource, string rdlcFile, string sheetname, List<ReportParameter> rParams)
+        {
+            this.reportViewer1.LocalReport.DataSources.Clear();
+
+            pathfile = "NTC_Consolidator.Report." + rdlcFile;
+            
+            ReportDataSource dSource = new ReportDataSource();
+            dSource.Name = rptDataSetName;
+            dSource.Value = dtSource;
+            
+            this.reportViewer1.LocalReport.DisplayName = sheetname;
+            this.reportViewer1.ProcessingMode = ProcessingMode.Local;
+            this.reportViewer1.LocalReport.DataSources.Add(dSource);
+            this.reportViewer1.LocalReport.ReportEmbeddedResource = pathfile;
+            this.reportViewer1.LocalReport.SetParameters(rParams);
+            this.reportViewer1.RefreshReport();
+        }
+
+        public void LoadDataToRDLCForSummary(string[] rptDataSetName, string[] dtSource, string[] rdlcFile, string[] sheetname, List<ReportParameter> rParams)
+        {
+            this.reportViewer1.LocalReport.DataSources.Clear();
+
+            pathfile = "NTC_Consolidator.Report." + rdlcFile;
+
+            ReportDataSource dSBlankIndustryCode = new ReportDataSource("", ds);
+            ReportDataSource dSUDIBalance = new ReportDataSource("", ds);
+            ReportDataSource dSPVRV = new ReportDataSource("", ds);
+            ReportDataSource dSPVGD = new ReportDataSource("", ds);
+            ReportDataSource dSACCRUEDINTERESTRECEIVABLE = new ReportDataSource("", ds);
+            ReportDataSource dSCLIENTEQUITY = new ReportDataSource("", ds);
+            this.reportViewer1.LocalReport.DataSources.Add(dSBlankIndustryCode);
+            this.reportViewer1.LocalReport.DataSources.Add(dSUDIBalance);
+            this.reportViewer1.LocalReport.DataSources.Add(dSPVRV);
+            this.reportViewer1.LocalReport.DataSources.Add(dSPVGD);
+            this.reportViewer1.LocalReport.DataSources.Add(dSACCRUEDINTERESTRECEIVABLE);
+            this.reportViewer1.LocalReport.DataSources.Add(dSCLIENTEQUITY);
+
+
+
+
+            this.reportViewer1.LocalReport.DisplayName = sheetname[0];
+            this.reportViewer1.ProcessingMode = ProcessingMode.Local;
+            
+            this.reportViewer1.LocalReport.ReportEmbeddedResource = pathfile;
+            this.reportViewer1.LocalReport.SetParameters(rParams);
+            this.reportViewer1.RefreshReport();
+        }
+
+
+        private void GenerateExcel(string fileDestination, string ExportFilename, string fileFormat)
+        {
+            Warning[] warnings;
+            string[] streamids;
+            string mimeType;
+            string encoding;
+            string extension;
+            byte[] bytes = this.reportViewer1.LocalReport.Render(fileFormat.ToUpper(), "", out mimeType, out encoding, out extension, out streamids, out warnings);
+            FileStream fs = new FileStream(fileDestination, FileMode.Create);
+            fs.Write(bytes, 0, bytes.Length);
+            fs.Close();
+        }
+
+        private DataTable GetBlankIndustryCode()
+        {
+            pnlWaitInfo.Visible = true;
+            lblWaitInfo.Text = "Please wait while loading records...";
+            lblWaitStatus.Text = "Status: Fetching Data.";
+            pnlWaitInfo.Visible = false;
+           
+            dtexceptionalReport = new DataTable();
+            dtexceptionalReport.Columns.Add(new DataColumn("SYSTEM"));
+            dtexceptionalReport.Columns.Add(new DataColumn("AccountNo"));
+            dtexceptionalReport.Columns.Add(new DataColumn("ClientName"));
+            dtexceptionalReport.Columns.Add(new DataColumn("AO"));
+           // dtexceptionalReport.Columns.Add(new DataColumn("StatusPerSystem"));
+            dtexceptionalReport.Columns.Add(new DataColumn("PerFaMSAAFICBSIndustryCode"));
+            dtexceptionalReport.Columns.Add(new DataColumn("IndustryHeader"));
+            dtexceptionalReport.Columns.Add(new DataColumn("IndustryDetail"));
+            //dtexceptionalReport.Columns.Add(new DataColumn("PerFaMSAAFICBSAssetSize"));
+            //dtexceptionalReport.Columns.Add(new DataColumn("PerFaMSAAFICBSAssetSizeInWords"));
+            //dtexceptionalReport.Columns.Add(new DataColumn("RPT"));
+            //dtexceptionalReport.Columns.Add(new DataColumn("PreviousMonthsNPLTaggingByRisk"));
+
+            DataRow dr = null;
+
+            foreach (var objVal in iResult)
+            {
+                var item = objVal.ObjectToData();
+
+                dr = dtexceptionalReport.NewRow();
+               // dr["SYSTEM"] = item.Rows[0]["SYSTEM"];
+                dr["AccountNo"] = item.Rows[0]["AccountNo"];
+                dr["ClientName"] = item.Rows[0]["ClientName"];
+                dr["AO"] = item.Rows[0]["AO"];
+               // dr["StatusPerSystem"] = item.Rows[0]["StatusPerSystem"];
+                dr["PerFaMSAAFICBSIndustryCode"] = item.Rows[0]["PerFaMSAAFICBSIndustryCode"];
+                dr["IndustryHeader"] = item.Rows[0]["IndustryHeader"];
+                dr["IndustryDetail"] = item.Rows[0]["IndustryDetail"];
+                //dr["PerFaMSAAFICBSAssetSize"] = item.Rows[0]["PerFaMSAAFICBSAssetSize"];
+                //dr["PerFaMSAAFICBSAssetSizeInWords"] = item.Rows[0]["PerFaMSAAFICBSAssetSizeInWords"];
+                //dr["RPT"] = item.Rows[0]["RPT"];
+                //dr["PreviousMonthsNPLTaggingByRisk"] = item.Rows[0]["PreviousMonthsNPLTaggingByRisk"];
+
+                dtexceptionalReport.Rows.Add(dr);
+            }
+            return dtexceptionalReport;
+        }
+
+        private DataTable GetInvalidDosriTagging()
+        {
+            pnlWaitInfo.Visible = true;
+            lblWaitInfo.Text = "Please wait while loading records...";
+            lblWaitStatus.Text = "Status: Fetching Data.";
+            pnlWaitInfo.Visible = false;
+
+            dtexceptionalReport = new DataTable();
+            //dtexceptionalReport.Columns.Add(new DataColumn("SYSTEM"));
+            dtexceptionalReport.Columns.Add(new DataColumn("AccountNo"));
+            dtexceptionalReport.Columns.Add(new DataColumn("ClientName"));
+            dtexceptionalReport.Columns.Add(new DataColumn("AO"));
+            //dtexceptionalReport.Columns.Add(new DataColumn("StatusPerSystem"));
+            //dtexceptionalReport.Columns.Add(new DataColumn("PerFaMSAAFICBSIndustryCode"));
+            //dtexceptionalReport.Columns.Add(new DataColumn("IndustryHeader"));
+            //dtexceptionalReport.Columns.Add(new DataColumn("IndustryDetail"));
+            //dtexceptionalReport.Columns.Add(new DataColumn("PerFaMSAAFICBSAssetSize"));
+            //dtexceptionalReport.Columns.Add(new DataColumn("PerFaMSAAFICBSAssetSizeInWords"));
+            dtexceptionalReport.Columns.Add(new DataColumn("RPT"));
+            //dtexceptionalReport.Columns.Add(new DataColumn("PreviousMonthsNPLTaggingByRisk"));
+
+            DataRow dr = null;
+
+            foreach (var objVal in iResult)
+            {
+                var item = objVal.ObjectToData();
+
+                dr = dtexceptionalReport.NewRow();
+                // dr["SYSTEM"] = item.Rows[0]["SYSTEM"];
+                dr["AccountNo"] = item.Rows[0]["AccountNo"];
+                dr["ClientName"] = item.Rows[0]["ClientName"];
+                dr["AO"] = item.Rows[0]["AO"];
+                // dr["StatusPerSystem"] = item.Rows[0]["StatusPerSystem"];
+                //dr["PerFaMSAAFICBSIndustryCode"] = item.Rows[0]["PerFaMSAAFICBSIndustryCode"];
+                //dr["IndustryHeader"] = item.Rows[0]["IndustryHeader"];
+                //dr["IndustryDetail"] = item.Rows[0]["IndustryDetail"];
+                //dr["PerFaMSAAFICBSAssetSize"] = item.Rows[0]["PerFaMSAAFICBSAssetSize"];
+                //dr["PerFaMSAAFICBSAssetSizeInWords"] = item.Rows[0]["PerFaMSAAFICBSAssetSizeInWords"];
+                dr["RPT"] = item.Rows[0]["RPT"];
+                //dr["PreviousMonthsNPLTaggingByRisk"] = item.Rows[0]["PreviousMonthsNPLTaggingByRisk"];
+
+                dtexceptionalReport.Rows.Add(dr);
+            }
+            return dtexceptionalReport;
+        }
+
+        private DataTable GetSumOfOB()
+        {
+            pnlWaitInfo.Visible = true;
+            lblWaitInfo.Text = "Please wait while loading records...";
+            lblWaitStatus.Text = "Status: Fetching Data.";
+            pnlWaitInfo.Visible = false;
+
+            dtSumOfOB = new DataTable();
+            dtSumOfOB.Columns.Add(new DataColumn("SYSTEM"));
+            dtSumOfOB.Columns.Add(new DataColumn("GMACT"));
+            dtSumOfOB.Columns.Add(new DataColumn("GMNAME"));
+            dtSumOfOB.Columns.Add(new DataColumn("GMYBAL"));
+            dtSumOfOB.Columns.Add(new DataColumn("ICBSGLCODE"));
+            dtSumOfOB.Columns.Add(new DataColumn("ICBSGLNAME"));
+            dtSumOfOB.Columns.Add(new DataColumn("SUMOFOB"));
+
+            DataRow dr = null;
+
+            foreach (var objVal in iResult)
+            {
+                var item = objVal.ObjectToData();
+
+                dr = dtSumOfOB.NewRow();
+                dr["SYSTEM"] = item.Rows[0]["SYSTEM"];
+                dr["GMACT"] = item.Rows[0]["GMACT"];
+                dr["GMNAME"] = item.Rows[0]["GMNAME"];
+                dr["GMYBAL"] = item.Rows[0]["GMCBAL"];
+
+                dr["ICBSGLCODE"] = item.Rows[0]["ICBSGLCode"];
+                dr["ICBSGLNAME"] = item.Rows[0]["ICBSGLName"];
+                //dr["SUMOFOB"] = item.Rows[0]["RPT"];
+
+                dtSumOfOB.Rows.Add(dr);
+            }
+            return dtSumOfOB;
+        }
+
+        private DataTable GetSumOfUDIBalance()
+        {
+            pnlWaitInfo.Visible = true;
+            lblWaitInfo.Text = "Please wait while loading records...";
+            lblWaitStatus.Text = "Status: Fetching Data.";
+            pnlWaitInfo.Visible = false;
+
+            dtSumOfUDIBalance = new DataTable();
+            dtSumOfUDIBalance.Columns.Add(new DataColumn("SYSTEM"));
+            dtSumOfUDIBalance.Columns.Add(new DataColumn("GMACT"));
+            dtSumOfUDIBalance.Columns.Add(new DataColumn("GMNAME"));
+            dtSumOfUDIBalance.Columns.Add(new DataColumn("GMYBAL"));
+            dtSumOfUDIBalance.Columns.Add(new DataColumn("ICBSGLCODE"));
+            dtSumOfUDIBalance.Columns.Add(new DataColumn("ICBSGLNAME"));
+            dtSumOfUDIBalance.Columns.Add(new DataColumn("SUMOFOB"));
+
+            DataRow dr = null;
+
+            foreach (var objVal in iResult)
+            {
+                var item = objVal.ObjectToData();
+
+                dr = dtSumOfUDIBalance.NewRow();
+                dr["SYSTEM"] = item.Rows[0]["SYSTEM"];
+                dr["GMACT"] = item.Rows[0]["GMACT"];
+                dr["GMNAME"] = item.Rows[0]["GMNAME"];
+                dr["GMYBAL"] = item.Rows[0]["GMCBAL"];
+
+                dr["ICBSGLCODE"] = item.Rows[0]["ICBSGLCode"];
+                dr["ICBSGLNAME"] = item.Rows[0]["ICBSGLName"];
+                //dr["SUMOFOB"] = item.Rows[0]["RPT"];
+
+                dtSumOfUDIBalance.Rows.Add(dr);
+            }
+            return dtSumOfUDIBalance;
+        }
+
+        private DataTable GetSumOfPVRV()
+        {
+            pnlWaitInfo.Visible = true;
+            lblWaitInfo.Text = "Please wait while loading records...";
+            lblWaitStatus.Text = "Status: Fetching Data.";
+            pnlWaitInfo.Visible = false;
+
+            dtSumOfPVRV = new DataTable();
+            dtSumOfPVRV.Columns.Add(new DataColumn("SYSTEM"));
+            dtSumOfPVRV.Columns.Add(new DataColumn("GMACT"));
+            dtSumOfPVRV.Columns.Add(new DataColumn("GMNAME"));
+            dtSumOfPVRV.Columns.Add(new DataColumn("GMYBAL"));
+            dtSumOfPVRV.Columns.Add(new DataColumn("ICBSGLCODE"));
+            dtSumOfPVRV.Columns.Add(new DataColumn("ICBSGLNAME"));
+            dtSumOfPVRV.Columns.Add(new DataColumn("SUMOFOB"));
+
+            DataRow dr = null;
+
+            foreach (var objVal in iResult)
+            {
+                var item = objVal.ObjectToData();
+
+                dr = dtSumOfPVRV.NewRow();
+                dr["SYSTEM"] = item.Rows[0]["SYSTEM"];
+                dr["GMACT"] = item.Rows[0]["GMACT"];
+                dr["GMNAME"] = item.Rows[0]["GMNAME"];
+                dr["GMYBAL"] = item.Rows[0]["GMCBAL"];
+
+                dr["ICBSGLCODE"] = item.Rows[0]["ICBSGLCode"];
+                dr["ICBSGLNAME"] = item.Rows[0]["ICBSGLName"];
+                //dr["SUMOFOB"] = item.Rows[0]["RPT"];
+
+                dtSumOfPVRV.Rows.Add(dr);
+            }
+            return dtSumOfPVRV;
+        }
+
+        private DataTable GetSumOfPVGD()
+        {
+            pnlWaitInfo.Visible = true;
+            lblWaitInfo.Text = "Please wait while loading records...";
+            lblWaitStatus.Text = "Status: Fetching Data.";
+            pnlWaitInfo.Visible = false;
+
+            dtSumOfPVGD = new DataTable();
+            dtSumOfPVGD.Columns.Add(new DataColumn("SYSTEM"));
+            dtSumOfPVGD.Columns.Add(new DataColumn("GMACT"));
+            dtSumOfPVGD.Columns.Add(new DataColumn("GMNAME"));
+            dtSumOfPVGD.Columns.Add(new DataColumn("GMYBAL"));
+            dtSumOfPVGD.Columns.Add(new DataColumn("ICBSGLCODE"));
+            dtSumOfPVGD.Columns.Add(new DataColumn("ICBSGLNAME"));
+            dtSumOfPVGD.Columns.Add(new DataColumn("SUMOFOB"));
+
+            DataRow dr = null;
+
+            foreach (var objVal in iResult)
+            {
+                var item = objVal.ObjectToData();
+
+                dr = dtSumOfPVGD.NewRow();
+                dr["SYSTEM"] = item.Rows[0]["SYSTEM"];
+                dr["GMACT"] = item.Rows[0]["GMACT"];
+                dr["GMNAME"] = item.Rows[0]["GMNAME"];
+                dr["GMYBAL"] = item.Rows[0]["GMCBAL"];
+
+                dr["ICBSGLCODE"] = item.Rows[0]["ICBSGLCode"];
+                dr["ICBSGLNAME"] = item.Rows[0]["ICBSGLName"];
+                //dr["SUMOFOB"] = item.Rows[0]["RPT"];
+
+                dtSumOfPVGD.Rows.Add(dr);
+            }
+            return dtSumOfPVGD;
+        }
+
+        private DataTable GetSumOfACCRUEDINTERESTRECEIVABLE()
+        {
+            pnlWaitInfo.Visible = true;
+            lblWaitInfo.Text = "Please wait while loading records...";
+            lblWaitStatus.Text = "Status: Fetching Data.";
+            pnlWaitInfo.Visible = false;
+
+            dtSumOfACCRUEDINTERESTRECEIVABLE = new DataTable();
+            dtSumOfACCRUEDINTERESTRECEIVABLE.Columns.Add(new DataColumn("SYSTEM"));
+            dtSumOfACCRUEDINTERESTRECEIVABLE.Columns.Add(new DataColumn("GMACT"));
+            dtSumOfACCRUEDINTERESTRECEIVABLE.Columns.Add(new DataColumn("GMNAME"));
+            dtSumOfACCRUEDINTERESTRECEIVABLE.Columns.Add(new DataColumn("GMYBAL"));
+            dtSumOfACCRUEDINTERESTRECEIVABLE.Columns.Add(new DataColumn("ICBSGLCODE"));
+            dtSumOfACCRUEDINTERESTRECEIVABLE.Columns.Add(new DataColumn("ICBSGLNAME"));
+            dtSumOfACCRUEDINTERESTRECEIVABLE.Columns.Add(new DataColumn("SUMOFOB"));
+
+            DataRow dr = null;
+
+            foreach (var objVal in iResult)
+            {
+                var item = objVal.ObjectToData();
+
+                dr = dtSumOfACCRUEDINTERESTRECEIVABLE.NewRow();
+                dr["SYSTEM"] = item.Rows[0]["SYSTEM"];
+                dr["GMACT"] = item.Rows[0]["GMACT"];
+                dr["GMNAME"] = item.Rows[0]["GMNAME"];
+                dr["GMYBAL"] = item.Rows[0]["GMCBAL"];
+
+                dr["ICBSGLCODE"] = item.Rows[0]["ICBSGLCode"];
+                dr["ICBSGLNAME"] = item.Rows[0]["ICBSGLName"];
+                //dr["SUMOFOB"] = item.Rows[0]["RPT"];
+
+                dtSumOfACCRUEDINTERESTRECEIVABLE.Rows.Add(dr);
+            }
+            return dtSumOfACCRUEDINTERESTRECEIVABLE;
+        }
+
+        private DataTable GetSumOfCLIENTEQUITY()
+        {
+            pnlWaitInfo.Visible = true;
+            lblWaitInfo.Text = "Please wait while loading records...";
+            lblWaitStatus.Text = "Status: Fetching Data.";
+            pnlWaitInfo.Visible = false;
+
+            dtSumOfCLIENTEQUITY = new DataTable();
+            dtSumOfCLIENTEQUITY.Columns.Add(new DataColumn("SYSTEM"));
+            dtSumOfCLIENTEQUITY.Columns.Add(new DataColumn("GMACT"));
+            dtSumOfCLIENTEQUITY.Columns.Add(new DataColumn("GMNAME"));
+            dtSumOfCLIENTEQUITY.Columns.Add(new DataColumn("GMYBAL"));
+            dtSumOfCLIENTEQUITY.Columns.Add(new DataColumn("ICBSGLCODE"));
+            dtSumOfCLIENTEQUITY.Columns.Add(new DataColumn("ICBSGLNAME"));
+            dtSumOfCLIENTEQUITY.Columns.Add(new DataColumn("SUMOFOB"));
+
+            DataRow dr = null;
+
+            foreach (var objVal in iResult)
+            {
+                var item = objVal.ObjectToData();
+
+                dr = dtSumOfCLIENTEQUITY.NewRow();
+                dr["SYSTEM"] = item.Rows[0]["SYSTEM"];
+                dr["GMACT"] = item.Rows[0]["GMACT"];
+                dr["GMNAME"] = item.Rows[0]["GMNAME"];
+                dr["GMYBAL"] = item.Rows[0]["GMCBAL"];
+
+                dr["ICBSGLCODE"] = item.Rows[0]["ICBSGLCode"];
+                dr["ICBSGLNAME"] = item.Rows[0]["ICBSGLName"];
+                //dr["SUMOFOB"] = item.Rows[0]["RPT"];
+
+                dtSumOfCLIENTEQUITY.Rows.Add(dr);
+            }
+            return dtSumOfCLIENTEQUITY;
+        }
+
+        private void btnExecute_Click(object sender, EventArgs e)
+        {
+            dtexceptionalReport = new DataTable();
+
+            var frmdate = Convert.ToDateTime(cmbDateFrom.Text);
+            var todate = DateTime.Today;//Convert.ToDateTime(cmbDateFrom.Text);
+            
+            List<ReportParameter> parameters = new List<ReportParameter>();
+            
+            switch (txtRptName.Text.Trim().ToLower())
+            {
+                #region NTCReport
+                case "consolidator":
+                    parameters.Add(new ReportParameter("paramDateFrom", cmbDateFrom.Text));
+                    iResult = consolidatorRepository.ExceptionReportBlankIndustryCode(frmdate, todate, "ICBS");
+                    rptDataSetName = "dsNTCReport";
+                    filename = "NTC Consolidated File";
+                    rdlcFile = "NTCConsolidatorReport.rdlc";
+                    sheetname = "NTC Consolidated Report";
+                    break;
+                //case "corresponding gl":
+                //    //iResult = consolidatorRepository.ExceptionReportBlankIndustryCode(frmdate, todate, "ICBS");
+                //    rptDataSetName = "dsCorrespondingGL";
+                //    filename = "NTC Corresponding GL";
+                //    rdlcFile = "CorrespondingGL.rdlc";
+                //    sheetname = "NTC Corresponding GL";
+                //    break;
+                //case "daily gl":
+                //    // iResult = consolidatorRepository.ExceptionReportBlankIndustryCode(frmdate, todate, "ICBS");
+                //    rptDataSetName = "dsDailyGL";
+                //    filename = "NTC Daily GL";
+                //    rdlcFile = "DailyGL.rdlc";
+                //    sheetname = "NTC Corresponding GL";
+                //    break;
+                //case "exchange rate":
+                //    //iResult = consolidatorRepository.ExceptionReportBlankIndustryCode(frmdate, todate, "ICBS");
+                //    rptDataSetName = "dsExchangeRate";
+                //    filename = "NTC Exchange Rate";
+                //    rdlcFile = "ExchangeRate.rdlc";
+                //    sheetname = "NTC Exchange Rate";
+                //    break;
+                //case "migrated account":
+                //    //iResult = consolidatorRepository.ExceptionReportBlankIndustryCode(frmdate, todate, "ICBS");
+                //    rptDataSetName = "dsMigratedAccount";
+                //    filename = "NTC Migrated Account";
+                //    rdlcFile = "MigratedAccount.rdlc";
+                //    sheetname = "NTC Migrated Account";
+                //    break;
+                //case "past due":
+                //    //iResult = consolidatorRepository.ExceptionReportBlankIndustryCode(frmdate, todate, "ICBS");
+                //    rptDataSetName = "dsPastDue";
+                //    filename = "NTC Past Due";
+                //    rdlcFile = "PastDue.rdlc";
+                //    sheetname = "NTC Past Due";
+                //    break;
+                //case "qualifying capital":
+                //    //iResult = consolidatorRepository.ExceptionReportBlankIndustryCode(frmdate, todate, "ICBS");
+                //    rptDataSetName = "dsQualifyingCapital";
+                //    filename = "NTC Qualifying Capital";
+                //    rdlcFile = "QualifyingCapitalReport.rdlc";
+                //    sheetname = "NTC Qualifying Capital";
+                //    break;
+                //case "under litigation":
+                //    //iResult = consolidatorRepository.ExceptionReportBlankIndustryCode(frmdate, todate, "ICBS");
+                //    rptDataSetName = "dsUnderLitigation";
+                //    filename = "NTC Under Litigation";
+                //    rdlcFile = "UnderLitigation.rdlc";
+                //    sheetname = "NTC Under Litigation";
+                //    break;
+                #endregion
+
+                #region Exceptional Report
+                #region ICBS
+                case "icbs - blank industry code":
+                    iResult = consolidatorRepository.ExceptionReportBlankIndustryCode(frmdate, todate, "ICBS");
+                    GetBlankIndustryCode();
+                    rptDataSetName = "dsicbsblankindustrycode";
+                    filename = "NTC ICBS - Blank Industry Code";
+                    rdlcFile = "Icbsblankindustrycode.rdlc";
+                    sheetname = "ICBS - Blank Industry Code";
+                    break;
+                case "icbs - zero asset size":
+                    iResult = consolidatorRepository.ExceptionReportZeroAssetSizeICBS(frmdate, todate, "ICBS");
+                    rptDataSetName = "dsicbszeroassetsize";
+                    filename = "NTC ICBS - zero asset size";
+                    rdlcFile = "Icbszeroassetsize.rdlc";
+                    sheetname = "ICBS - zero asset size";
+                    break;
+                case "icbs - dosri tagging":
+                    parameters.Add(new ReportParameter("paramDateFrom", cmbDateFrom.Text));
+                    parameters.Add(new ReportParameter("paramDateTo", cmbDateTo.Text));
+                    iResult = consolidatorRepository.ExceptionReportDosriTagging(frmdate, todate, "ICBS");
+                    GetInvalidDosriTagging();
+                    rptDataSetName = "dsicbsdosritagging";
+                    filename = "NTC ICBS - dosri tagging";
+                    rdlcFile = "Icbsdosritagging.rdlc";
+                    sheetname = "ICBS - Dosri Tagging";
+                    break;
+                #endregion
+                #region AAF
+                case "aaf - blank industry code":
+                    parameters.Add(new ReportParameter("paramDateFrom", cmbDateFrom.Text));
+                    parameters.Add(new ReportParameter("paramDateTo", cmbDateTo.Text));
+                    iResult = consolidatorRepository.ExceptionReportBlankIndustryCode(frmdate, todate, "AAF");
+                    GetBlankIndustryCode();
+                    filename = "NTC AAF - blank industry code";
+                    rdlcFile = "Aafblankindustrycode.rdlc";
+                    sheetname = "AAF - blank industry code";
+                    rptDataSetName = "dsBlankIndustryCode";
+                    break;
+                case "aaf - zero asset size":
+                    parameters.Add(new ReportParameter("paramDateFrom", cmbDateFrom.Text));
+                    parameters.Add(new ReportParameter("paramDateTo", cmbDateTo.Text));
+                    iResult = consolidatorRepository.ExceptionReportZeroAssetSize(frmdate, todate, "AAF");
+                    rptDataSetName = "dsaafzeroassetsize";
+                    filename = "NTC AAF - zero asset size";
+                    rdlcFile = "Aafzeroassetsize.rdlc";
+                    sheetname = "AAF - zero asset size";
+                    break;
+                //case "aaf - dosri tagging":
+                //    parameters.Add(new ReportParameter("paramDateFrom", cmbDateFrom.Text));
+                //    parameters.Add(new ReportParameter("paramDateTo", cmbDateTo.Text));
+                //    iResult = consolidatorRepository.ExceptionReportDosriTagging(frmdate, todate, "AAF");
+                //    GetInvalidDosriTagging();
+                //    rptDataSetName = "dsInvalidDosriTagging";
+                //    filename = "NTC AAF - dosri tagging";
+                //    rdlcFile = "Aafdosritagging.rdlc";
+                //    sheetname = "AAF - dosri tagging";
+                //    break; 
+                #endregion
+                case "difference in tagging of risk and gl":
+                    parameters.Add(new ReportParameter("paramDateFrom", cmbDateFrom.Text));
+                    parameters.Add(new ReportParameter("paramDateTo", cmbDateTo.Text));
+                    iResult = consolidatorRepository.ExceptionReportBlankIndustryCode(frmdate, todate, "AAF");
+                    rptDataSetName = "dsdifferenceintaggingofriskandgl";
+                    filename = "NTC Difference in tagging of risk and gl";
+                    rdlcFile = "Differenceintaggingofriskandgl.rdlc";
+                    sheetname = "Difference In Tagging of Risk and GL";
+                    break;
+                case "summary report":
+                    parameters.Add(new ReportParameter("paramDateFrom", cmbDateFrom.Text));
+                    parameters.Add(new ReportParameter("paramDateTo", cmbDateTo.Text));
+                    iResult = consolidatorRepository.ExceptionReportSummaryReportSumOfOB(frmdate, todate, "");
+                    GetSumOfOB();
+                    iResult = consolidatorRepository.ExceptionReportSummaryReportSumOfUDIBalance(frmdate, todate, "");
+                    GetSumOfUDIBalance();
+                    iResult = consolidatorRepository.ExceptionReportSummaryReportSumOfPVRV(frmdate, todate, "");
+                    GetSumOfPVRV();
+                    iResult = consolidatorRepository.ExceptionReportSummaryReportSumOfPVGD(frmdate, todate, "");
+                    GetSumOfPVGD();
+                    iResult = consolidatorRepository.ExceptionReportSummaryReportSumOfACCRUEDINTERESTRECEIVABLE(frmdate, todate, "");
+                    GetSumOfACCRUEDINTERESTRECEIVABLE();
+                    iResult = consolidatorRepository.ExceptionReportSummaryReportSumOfCLIENTEQUITY(frmdate, todate, "");
+                    GetSumOfCLIENTEQUITY();
+                    rptDataSetName = "dssummary";
+                    filename = "NTC Summary Report";
+                    rdlcFile = "SummaryReport.rdlc";
+                    sheetname = "Summary Report";
+                    break;
+                    #endregion
+
+            }
+
+            if (filename == "NTC Summary Report")
+            {
+                var dtDataSetNameArray = new string[5];
+                var dtdtexceptionalReportArray = new string[5];
+                var dtdtexceptionalReportArray = new string[5];
+
+                LoadDataToRDLCForSummary(dtDataSetNameArray, dtdtexceptionalReportArray, rdlcFile, sheetname, parameters);
+            }
+            else
+            {
+                LoadDataToRDLC(rptDataSetName, dtexceptionalReport, rdlcFile, sheetname, parameters);
+            }
+        }
+
+        private void frmReportViewer_FormClosed(object sender, FormClosedEventArgs e)
+        {
+            frmReportViewer.frmrptviewer = null;
+        }
+
+        private void miniToolStrip_ItemClicked(object sender, ToolStripItemClickedEventArgs e)
+        {
+
+        }
+
+        private void consolidatorToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(consolidatorToolStripMenuItem.Text);
+        }
+
+        private void correspondingGLToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(correspondingGLToolStripMenuItem.Text);
+        }
+
+        private void rptHover(string rptname)
+        {
+            txtRptName.Text = rptname;
+        }
+
+        private void dailyGLToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(dailyGLToolStripMenuItem.Text);
+        }
+
+        private void exchangeRateToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(exchangeRateToolStripMenuItem.Text);
+        }
+
+        private void migratedAccountToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(migratedAccountToolStripMenuItem.Text);
+        }
+
+        private void pastDueToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(pastDueToolStripMenuItem.Text);
+        }
+
+        private void qualifyingCapitalToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(qualifyingCapitalToolStripMenuItem.Text);
+        }
+
+        private void underLitigationToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(underLitigationToolStripMenuItem.Text);
+        }
+
+        private void summaryReportToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(summaryReportToolStripMenuItem.Text);
+        }
+
+        private void aAFBlankIndustryCodeToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(aAFBlankIndustryCodeToolStripMenuItem.Text);
+        }
+
+        private void aAFDOSRITAGGINGToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(aAFDOSRITAGGINGToolStripMenuItem.Text);
+        }
+
+        private void aAFZeroAssetSizeToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(aAFZeroAssetSizeToolStripMenuItem.Text);
+        }
+
+        private void iCBSBlankIndustryCodeToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(iCBSBlankIndustryCodeToolStripMenuItem.Text);
+        }
+
+        private void iCBSDOSRITaggingToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(iCBSDOSRITaggingToolStripMenuItem.Text);
+        }
+
+        private void iCBSZeroAssetSizeToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(iCBSZeroAssetSizeToolStripMenuItem.Text);
+        }
+
+        private void differenceInTaggingOfRiskAndGLToolStripMenuItem_MouseHover(object sender, EventArgs e)
+        {
+            rptHover(differenceInTaggingOfRiskAndGLToolStripMenuItem.Text);
+        }
+
+        private void consolidatorToolStripMenuItem_MouseMove(object sender, MouseEventArgs e)
+        {
+            rptHover(consolidatorToolStripMenuItem.Text);
+        }
+
+        private void correspondingGLToolStripMenuItem_MouseMove(object sender, MouseEventArgs e)
+        {
+            rptHover(correspondingGLToolStripMenuItem.Text);
+        }
+
+        private void consolidatorToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(consolidatorToolStripMenuItem.Text);
+        }
+
+        private void correspondingGLToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(correspondingGLToolStripMenuItem.Text);
+        }
+
+        private void dailyGLToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(dailyGLToolStripMenuItem.Text);
+        }
+
+        private void exchangeRateToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(exchangeRateToolStripMenuItem.Text);
+        }
+
+        private void migratedAccountToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(migratedAccountToolStripMenuItem.Text);
+        }
+
+        private void pastDueToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(pastDueToolStripMenuItem.Text);
+        }
+
+        private void qualifyingCapitalToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(qualifyingCapitalToolStripMenuItem.Text);
+        }
+
+        private void underLitigationToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(underLitigationToolStripMenuItem.Text);
+        }
+
+        private void summaryReportToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(summaryReportToolStripMenuItem.Text);
+        }
+
+        private void aAFBlankIndustryCodeToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(aAFBlankIndustryCodeToolStripMenuItem.Text);
+        }
+
+        private void aAFDOSRITAGGINGToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(aAFDOSRITAGGINGToolStripMenuItem.Text);
+        }
+
+        private void aAFZeroAssetSizeToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(aAFZeroAssetSizeToolStripMenuItem.Text);
+        }
+
+        private void iCBSBlankIndustryCodeToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(iCBSBlankIndustryCodeToolStripMenuItem.Text);
+        }
+
+        private void iCBSDOSRITaggingToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(iCBSDOSRITaggingToolStripMenuItem.Text);
+        }
+
+        private void iCBSZeroAssetSizeToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(iCBSZeroAssetSizeToolStripMenuItem.Text);
+        }
+
+        private void differenceInTaggingOfRiskAndGLToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            rptHover(differenceInTaggingOfRiskAndGLToolStripMenuItem.Text);
+        }
+
+        private void txtRptName_TextChanged(object sender, EventArgs e)
+        {
+            btnExecute.Enabled = txtRptName.Text.Length > 0 ? true : false;
+        }
+
+        private void btnExport_Click(object sender, EventArgs e)
+        {
+            SaveFileDialog diag = new SaveFileDialog();
+            diag.Filter = "Excel Files(.xls)|*.xls";//| Excel Files(.xlsx) | *.xlsx";
+            diag.FilterIndex = 0;
+            diag.RestoreDirectory = true;
+            diag.Title = "Export NTC Consolidator To Excel File";
+
+            if (!string.IsNullOrEmpty(txtRptName.Text.Trim()))
+            {
+                if (diag.ShowDialog() == DialogResult.OK)
+                {
+                    pnlWaitInfo.Visible = false;
+                    var ExportFilename = diag.FileName;
+                    var fileDestination = Path.GetFullPath(diag.FileName);
+                    var fileFormat = "Excel";
+
+                    //set filter module here
+                    //this query is for exceptional report only
+
+                    GenerateExcel(fileDestination, ExportFilename, fileFormat);
+                }
+            }
+        }
+    }
+
+}
